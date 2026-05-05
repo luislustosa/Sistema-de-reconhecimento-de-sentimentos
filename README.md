@@ -1,0 +1,1 @@
+# Sistema-de-reconhecimento-de-sentimentos
