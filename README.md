@@ -9,4 +9,4 @@
 
 ## MVP
 
-Fazer um sistema que reconheça o sentimento que aquela pessoa está sentindo,baseado na sua expressão facial.Usaremos python e suas bibliotecas
+Fazer um sistema que reconheça o sentimento que aquela pessoa está sentindo,baseado na sua expressão facial.Em seguida,recomendar algum site,mudar a estética do site ou dar algum diagnostico ou palavra motivacional para o usuario.
