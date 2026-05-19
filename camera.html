@@ -27,13 +27,35 @@
             border: 2px solid #333;
             object-fit: cover;
         }
+
+        button {
+            margin-top: 20px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+
+        #result {
+            margin-top: 20px;
+            font-size: 18px;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
     <video id="camera" autoplay playsinline></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+    <button onclick="capturarEAnalisar()">Analisar Emoção</button>
+    <div id="result"></div>
 
     <script>
         const video = document.getElementById('camera');
+        const canvas = document.getElementById('canvas');
+        const resultDiv = document.getElementById('result');
 
         navigator.mediaDevices.getUserMedia({ video: true })
             .then(stream => {
@@ -42,6 +64,32 @@
             .catch(err => {
                 alert('Erro ao acessar câmera: ' + err.message);
             });
+
+        function capturarEAnalisar() {
+            const ctx = canvas.getContext('2d');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0);
+
+            canvas.toBlob(blob => {
+                const formData = new FormData();
+                formData.append('image', blob, 'frame.jpg');
+
+                fetch('http://localhost:5000/detect-emotion', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.emotion) {
+                        resultDiv.innerHTML = `<p>Emoção detectada: <strong>${data.emotion}</strong></p>`;
+                    } else {
+                        resultDiv.innerHTML = `<p style="color:red;">Erro: ${data.error}</p>`;
+                    }
+                })
+                .catch(err => console.error('Erro:', err));
+            }, 'image/jpeg');
+        }
     </script>
 </body>
 </html>
