@@ -1,27 +1,49 @@
 from flask import Flask, request, jsonify
-from deepface import DeepFace
+from flask_cors import CORS
 import cv2
 import numpy as np
-from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
 
-@app.route('/detect-emotion', methods=['POST'])
-def detect_emotion():
-    try:
-        image_data = request.files['image']
-        image_array = np.frombuffer(image_data.read(), np.uint8) # Recebe imagem do frontend ( camera.html ) 
-        image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
-        
-        
-        result = DeepFace.analyze(image, actions=['emotion'], enforce_detection=False) #Modelo deepface vai analizar a imagem e trazer a emocao mais forte
-        emotion = result[0]['dominant_emotion']                         
-        emotions = result[0]['emotion']
-        
-        return jsonify({'emotion': emotion, 'all_emotions': emotions})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
 
-if __name__ == '__main__':
-    app.run(debug=True)
+FACE_CASCADE = cv2.CascadeClassifier(
+    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+)
+
+@app.post("/detect-face")
+def detect_face():
+    file = request.files.get("image")
+    if not file:
+        return jsonify(error="Campo 'image' não foi enviado."), 400
+
+    try:
+ 
+        data = np.frombuffer(file.read(), dtype=np.uint8)
+        img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        if img is None:
+            return jsonify(error="Arquivo enviado não é uma imagem válida."), 400
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+
+        faces = FACE_CASCADE.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(60, 60)
+        )
+
+        faces_list = [{"x": int(x), "y": int(y), "w": int(w), "h": int(h)} for (x, y, w, h) in faces]
+        primary = None
+        if faces_list:
+            primary = max(faces_list, key=lambda f: f["w"] * f["h"])
+
+        return jsonify(primary=primary, faces=faces_list)
+
+    except Exception as e:
+        return jsonify(error=str(e)), 400
+
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=5000, debug=True)
