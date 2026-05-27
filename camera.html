@@ -1,95 +1,189 @@
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Câmera</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Câmera</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
 
-        body {
-            width: 100vw;
-            height: 100vh;
-            background-color: white;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-family: Arial, sans-serif;
-        }
+    body {
+      width: 100vw;
+      height: 100vh;
+      background-color: white;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      font-family: Arial, sans-serif;
+      gap: 16px;
+    }
 
-        video {
-            width: 400px;
-            height: 400px;
-            border: 2px solid #333;
-            object-fit: cover;
-        }
+    /* container para vídeo + overlay */
+    .frame {
+      position: relative;
+      width: 400px;
+      height: 400px;
+      border: 2px solid #333;
+      overflow: hidden;
+      background: #000;
+    }
 
-        button {
-            margin-top: 20px;
-            padding: 10px 20px;
-            font-size: 16px;
-            cursor: pointer;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 5px;
-        }
+    video, canvas#overlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
 
-        #result {
-            margin-top: 20px;
-            font-size: 18px;
-            font-weight: bold;
-        }
-    </style>
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 5px;
+    }
+
+    #result {
+      font-size: 16px;
+      font-weight: bold;
+      min-height: 20px;
+    }
+  </style>
 </head>
 <body>
+
+  <div class="frame">
     <video id="camera" autoplay playsinline></video>
-    <canvas id="canvas" style="display:none;"></canvas>
-    <button onclick="capturarEAnalisar()">Analisar Emoção</button>
-    <div id="result"></div>
+    <!-- CANVAS VISÍVEL PARA DESENHAR O QUADRADO -->
+    <canvas id="overlay"></canvas>
+  </div>
 
-    <script>
-        const video = document.getElementById('camera');
-        const canvas = document.getElementById('canvas');
-        const resultDiv = document.getElementById('result');
+  <!-- canvas escondido só para capturar frame e enviar ao backend -->
+  <canvas id="capture" style="display:none;"></canvas>
 
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(stream => {
-                video.srcObject = stream;
-            })
-            .catch(err => {
-                alert('Erro ao acessar câmera: ' + err.message);
-            });
+  <button id="toggleBtn">Parar detecção</button>
+  <div id="result"></div>
 
-        function capturarEAnalisar() {
-            const ctx = canvas.getContext('2d');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0);
+  <script>
+    const video = document.getElementById('camera');
+    const overlay = document.getElementById('overlay');
+    const capture = document.getElementById('capture');
+    const resultDiv = document.getElementById('result');
+    const toggleBtn = document.getElementById('toggleBtn');
 
-            canvas.toBlob(blob => {
-                const formData = new FormData();
-                formData.append('image', blob, 'frame.jpg');
+    const octx = overlay.getContext('2d');
+    const cctx = capture.getContext('2d');
 
-                fetch('http://localhost:5000/detect-emotion', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.emotion) {
-                        resultDiv.innerHTML = `<p>Emoção detectada: <strong>${data.emotion}</strong></p>`;
-                    } else {
-                        resultDiv.innerHTML = `<p style="color:red;">Erro: ${data.error}</p>`;
-                    }
-                })
-                .catch(err => console.error('Erro:', err));
-            }, 'image/jpeg');
+    let running = true;
+    let busy = false; // evita enviar outro frame enquanto um fetch ainda está em andamento
+    let lastSent = 0;
+
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(stream => {
+        video.srcObject = stream;
+      })
+      .catch(err => {
+        alert('Erro ao acessar câmera: ' + err.message);
+      });
+
+    toggleBtn.onclick = () => {
+      running = !running;
+      toggleBtn.textContent = running ? "Parar detecção" : "Iniciar detecção";
+      if (running) loop();
+      else {
+        octx.clearRect(0, 0, overlay.width, overlay.height);
+        resultDiv.textContent = "";
+      }
+    };
+
+    function drawBox(face, vw, vh) {
+      // limpa overlay
+      octx.clearRect(0, 0, overlay.width, overlay.height);
+
+      if (!face) return;
+
+      // face vem nas coordenadas do frame original (capture)
+      // overlay está no tamanho do elemento na tela: usamos escala
+      const sx = overlay.width / vw;
+      const sy = overlay.height / vh;
+
+      const x = face.x * sx;
+      const y = face.y * sy;
+      const w = face.w * sx;
+      const h = face.h * sy;
+
+      octx.lineWidth = 3;
+      octx.strokeStyle = "#00ff00";
+      octx.strokeRect(x, y, w, h);
+    }
+
+    async function sendFrame() {
+      if (busy) return;
+      busy = true;
+
+      try {
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+        if (!vw || !vh) return;
+
+        // Ajusta tamanhos reais dos canvases para bater com o frame do vídeo
+        capture.width = vw;
+        capture.height = vh;
+        overlay.width = vw;
+        overlay.height = vh;
+
+        // Desenha frame atual no canvas de captura
+        cctx.drawImage(video, 0, 0, vw, vh);
+
+        // Converte para Blob e envia
+        const blob = await new Promise(resolve => capture.toBlob(resolve, 'image/jpeg', 0.8));
+
+        const formData = new FormData();
+        formData.append('image', blob, 'frame.jpg');
+
+        const res = await fetch('http://127.0.0.1:5000/detect-face', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await res.json();
+
+        if (data.error) {
+          resultDiv.innerHTML = `<span style="color:red;">Erro: ${data.error}</span>`;
+          drawBox(null, vw, vh);
+        } else {
+          // desenha a face principal (maior)
+          drawBox(data.primary, vw, vh);
+          resultDiv.textContent = data.primary ? "Rosto detectado ✅" : "Nenhum rosto detectado";
         }
-    </script>
+      } catch (err) {
+        resultDiv.innerHTML = `<span style="color:red;">Erro: ${err.message}</span>`;
+      } finally {
+        busy = false;
+      }
+    }
+
+    function loop(ts) {
+      if (!running) return;
+
+      // manda no máximo 1 frame a cada 200ms (ajuste aqui)
+      if (!lastSent || (ts - lastSent) > 200) {
+        lastSent = ts;
+        sendFrame();
+      }
+
+      requestAnimationFrame(loop);
+    }
+
+    // inicia quando o vídeo estiver pronto
+    video.addEventListener('loadedmetadata', () => {
+      requestAnimationFrame(loop);
+    });
+  </script>
 </body>
 </html>
