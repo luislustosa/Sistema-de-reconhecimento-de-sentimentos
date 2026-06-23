@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -20,7 +19,6 @@
       gap: 16px;
     }
 
-    /* container para vídeo + overlay */
     .frame {
       position: relative;
       width: 400px;
@@ -59,67 +57,86 @@
 
   <div class="frame">
     <video id="camera" autoplay playsinline></video>
-    <!-- CANVAS VISÍVEL PARA DESENHAR O QUADRADO -->
     <canvas id="overlay"></canvas>
   </div>
 
-  <!-- canvas escondido só para capturar frame e enviar ao backend -->
   <canvas id="capture" style="display:none;"></canvas>
 
   <button id="toggleBtn">Parar detecção</button>
   <div id="result"></div>
 
   <script>
-    const video = document.getElementById('camera');
-    const overlay = document.getElementById('overlay');
-    const capture = document.getElementById('capture');
+    const video     = document.getElementById('camera');
+    const overlay   = document.getElementById('overlay');
+    const capture   = document.getElementById('capture');
     const resultDiv = document.getElementById('result');
     const toggleBtn = document.getElementById('toggleBtn');
 
-    const octx = overlay.getContext('2d');
-    const cctx = capture.getContext('2d');
+    const DISPLAY_W = 400;
+    const DISPLAY_H = 400;
 
-    let running = true;
-    let busy = false; // evita enviar outro frame enquanto um fetch ainda está em andamento
+    overlay.width  = DISPLAY_W;
+    overlay.height = DISPLAY_H;
+
+    const octx = overlay.getContext('2d');
+    const cctx  = capture.getContext('2d');
+
+    let running  = true;
+    let busy     = false;
     let lastSent = 0;
 
     navigator.mediaDevices.getUserMedia({ video: true })
-      .then(stream => {
-        video.srcObject = stream;
-      })
-      .catch(err => {
-        alert('Erro ao acessar câmera: ' + err.message);
-      });
+      .then(stream => { video.srcObject = stream; })
+      .catch(err   => { alert('Erro ao acessar câmera: ' + err.message); });
 
     toggleBtn.onclick = () => {
       running = !running;
       toggleBtn.textContent = running ? "Parar detecção" : "Iniciar detecção";
-      if (running) loop();
+      if (running) requestAnimationFrame(loop);
       else {
-        octx.clearRect(0, 0, overlay.width, overlay.height);
+        octx.clearRect(0, 0, DISPLAY_W, DISPLAY_H);
         resultDiv.textContent = "";
       }
     };
 
-    function drawBox(face, vw, vh) {
-      // limpa overlay
-      octx.clearRect(0, 0, overlay.width, overlay.height);
-
+    function drawBox(face, sentiment, vw, vh) {
+      octx.clearRect(0, 0, DISPLAY_W, DISPLAY_H);
       if (!face) return;
 
-      // face vem nas coordenadas do frame original (capture)
-      // overlay está no tamanho do elemento na tela: usamos escala
-      const sx = overlay.width / vw;
-      const sy = overlay.height / vh;
+      const sx = DISPLAY_W / vw;
+      const sy = DISPLAY_H / vh;
 
       const x = face.x * sx;
       const y = face.y * sy;
       const w = face.w * sx;
       const h = face.h * sy;
 
-      octx.lineWidth = 3;
-      octx.strokeStyle = "#00ff00";
+      // Cor do quadrado muda conforme sentimento
+      const isFeliz     = sentiment === "Feliz";
+      const boxColor    = isFeliz ? "#00cc44" : "#3399ff";
+      const labelBg     = isFeliz ? "#00cc44" : "#3399ff";
+      const label       = sentiment;
+
+      // Quadrado do rosto
+      octx.lineWidth   = 3;
+      octx.strokeStyle = boxColor;
       octx.strokeRect(x, y, w, h);
+
+      // Fundo da etiqueta de sentimento
+      const fontSize  = 18;
+      octx.font       = `bold ${fontSize}px Arial`;
+      const textW     = octx.measureText(label).width + 12;
+      const textH     = fontSize + 10;
+      const labelX    = x;
+      const labelY    = y - textH - 2;
+
+      octx.fillStyle = labelBg;
+      octx.fillRect(labelX, labelY < 0 ? y + 2 : labelY, textW, textH);
+
+      // Texto do sentimento
+      octx.fillStyle    = "white";
+      octx.textBaseline = "top";
+      octx.fillText(label, labelX + 6, labelY < 0 ? y + 7 : labelY + 5);
     }
 
     async function sendFrame() {
@@ -131,22 +148,19 @@
         const vh = video.videoHeight;
         if (!vw || !vh) return;
 
-        // Ajusta tamanhos reais dos canvases para bater com o frame do vídeo
-        capture.width = vw;
+        capture.width  = vw;
         capture.height = vh;
-        overlay.width = vw;
-        overlay.height = vh;
 
-        // Desenha frame atual no canvas de captura
         cctx.drawImage(video, 0, 0, vw, vh);
 
-        // Converte para Blob e envia
-        const blob = await new Promise(resolve => capture.toBlob(resolve, 'image/jpeg', 0.8));
+        const blob = await new Promise(resolve =>
+          capture.toBlob(resolve, 'image/jpeg', 0.8)
+        );
 
         const formData = new FormData();
         formData.append('image', blob, 'frame.jpg');
 
-        const res = await fetch('http://127.0.0.1:5000/detect-face', {
+        const res  = await fetch('http://127.0.0.1:5000/detect-face', {
           method: 'POST',
           body: formData
         });
@@ -155,12 +169,17 @@
 
         if (data.error) {
           resultDiv.innerHTML = `<span style="color:red;">Erro: ${data.error}</span>`;
-          drawBox(null, vw, vh);
+          drawBox(null, null, vw, vh);
         } else {
-          // desenha a face principal (maior)
-          drawBox(data.primary, vw, vh);
-          resultDiv.textContent = data.primary ? "Rosto detectado ✅" : "Nenhum rosto detectado";
+          drawBox(data.primary, data.sentiment, vw, vh);
+
+          if (data.primary) {
+            resultDiv.innerHTML = `Rosto detectado  &nbsp;|&nbsp; <strong>${data.sentiment}</strong>`;
+          } else {
+            resultDiv.textContent = "Nenhum rosto detectado";
+          }
         }
+
       } catch (err) {
         resultDiv.innerHTML = `<span style="color:red;">Erro: ${err.message}</span>`;
       } finally {
@@ -171,7 +190,6 @@
     function loop(ts) {
       if (!running) return;
 
-      // manda no máximo 1 frame a cada 200ms (ajuste aqui)
       if (!lastSent || (ts - lastSent) > 200) {
         lastSent = ts;
         sendFrame();
@@ -180,7 +198,6 @@
       requestAnimationFrame(loop);
     }
 
-    // inicia quando o vídeo estiver pronto
     video.addEventListener('loadedmetadata', () => {
       requestAnimationFrame(loop);
     });
